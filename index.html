@@ -1,33 +1,194 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Teachable Machineによる名札スキャン">
-    <title>Name Scan</title>
-    <link rel="stylesheet" href="styles.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Name Scan</title>
+
+<style>
+/* ---------- Base ---------- */
+:root {
+  --bg: #f0f0f5;
+  --fg: #333;
+  --muted: #666;
+  --accent: #007bff;
+  --accent-dark: #0056b3;
+  --card-radius: 10px;
+}
+
+* { box-sizing: border-box; touch-action: manipulation; }
+
+body {
+  font-family: Arial, sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+  margin: 0;
+  padding: 16px;
+  text-align: center;
+}
+
+/* ---------- Headings ---------- */
+h1 {
+  font-size: 24px;
+  margin: 0 0 15px;
+}
+h2.subtitle {
+  font-size: 14px;
+  font-weight: normal;
+  color: #666;
+  margin: 6px 0 18px;
+}
+
+/* ---------- Buttons ---------- */
+button {
+  display: inline-block;
+  padding: 12px 16px;
+  margin: 6px;
+  font-size: 16px;
+  cursor: pointer;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  transition: background .2s ease;
+}
+button:hover { background: var(--accent-dark); }
+
+/* ボタンを並べるコンテナ */
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: center;
+  margin: 12px 0 18px;
+}
+.controls button {
+  flex: 1 1 140px;
+}
+
+/* ---------- Camera / Result ---------- */
+#webcam-container { margin-top: 15px; }
+#snapshot-container { margin-top: 15px; }
+#webcam-container canvas,
+#webcam-container video,
+#snapshot-container img {
+  max-width: 92vw;
+  height: auto;
+  border-radius: var(--card-radius);
+}
+#status-label {
+  margin-top: 10px;
+  font-size: 16px;
+  color: #444;
+}
+#result-label {
+  margin-top: 15px;
+  font-size: 18px;
+  font-weight: bold;
+  color: var(--fg);
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 600px) {
+  .controls button,
+  body > button {
+    width: 80%;
+    margin: 10px auto;
+    display: block;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+</style>
 </head>
 <body>
-    <h1>Name Scan</h1>
-    <h2 class="subtitle">名札から広がる、会話のきっかけ</h2>
+<h1>Name Scan</h1>
+<h2 class="subtitle">名札から広がる、会話のきっかけ</h2>
 
-    <div class="controls">
-        <button onclick="init()">カメラ起動</button>
-        <button onclick="predict()">撮影＆判定</button>
-        <button onclick="stopWebcam()">カメラ停止</button>
-    </div>
+<div class="controls">
+    <button onclick="init()">カメラ起動</button>
+    <button onclick="predict()">撮影＆判定</button>
+    <button onclick="stopWebcam()">カメラ停止</button>
+</div>
 
-    <div id="webcam-container"></div>
-    <div id="status-label">カメラ待機中...</div>
-    <div id="result-label">判定結果待機中...</div>
-    <div id="snapshot-container"></div>
+<div id="webcam-container"></div>
+<div id="status-label">カメラ待機中...</div>
+<div id="result-label">判定結果待機中...</div>
+<div id="snapshot-container"></div>
 
-    <!-- TensorFlow.js と Teachable Machine ライブラリ -->
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+<!-- 外部ライブラリ -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
 
-    <!-- メインスクリプト -->
-    <script src="script.js"></script>
+<script>
+// ====== 設定 ======
+const URL = "https://teachablemachine.withgoogle.com/models/BTkVQoxrM/";
+const VER = Date.now(); // キャッシュ回避
+const MODEL_URL    = `${URL}model.json?v=${VER}`;
+const METADATA_URL = `${URL}metadata.json?v=${VER}`;
+
+let model, webcam, maxPredictions;
+let cameraActive = false;
+
+const $ = (id) => document.getElementById(id);
+const log = (t) => { $("status-label").textContent = t; console.log(t); };
+
+// ====== 初期化 ======
+async function init() {
+  try {
+    log("モデル読込中…");
+    model = await tmImage.load(MODEL_URL, METADATA_URL);
+    maxPredictions = model.getTotalClasses();
+    log("モデル読み込み完了。カメラを起動中…");
+
+    const flip = true;
+    webcam = new tmImage.Webcam(320, 240, flip);
+    await webcam.setup();
+    await webcam.play();
+    cameraActive = true;
+
+    $("webcam-container").innerHTML = "";
+    $("webcam-container").appendChild(webcam.canvas);
+    log("カメラ起動中…");
+
+    requestAnimationFrame(updateCameraView);
+  } catch (e) {
+    console.error(e);
+    log("❌ モデル読み込み失敗。Ctrl+F5でハードリロードを試してください");
+  }
+}
+
+// ====== カメラ描画 ======
+function updateCameraView() {
+  if (!cameraActive) return;
+  webcam.update();
+  requestAnimationFrame(updateCameraView);
+}
+
+// ====== 撮影＆判定 ======
+async function predict() {
+  if (!webcam || !cameraActive) {
+    log("カメラが起動していません");
+    return;
+  }
+
+  const preds = await model.predict(webcam.canvas);
+  preds.sort((a, b) => b.probability - a.probability);
+  const top = preds[0];
+
+  const percent = (top.probability * 100).toFixed(2);
+  $("result-label").innerHTML =
+    `<h3>判定結果:</h3><div style="font-size:1.1rem;"><b>${top.className}</b>：${percent}%</div>`;
+}
+
+// ====== カメラ停止 ======
+function stopWebcam() {
+  if (webcam) webcam.stop();
+  cameraActive = false;
+  $("webcam-container").innerHTML = "";
+  log("カメラ停止中（結果は保持されます）");
+}
+</script>
 </body>
 </html>
-
